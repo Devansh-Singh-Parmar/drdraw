@@ -231,3 +231,159 @@ const selectWord = async (roomCode, word) => {
   if (!roomTimers.has(roomCode)) roomTimers.set(roomCode, {});
   roomTimers.get(roomCode).drawing = timer;
 };
+
+const endTurn = (roomCode) => {
+  const room = room.get(roomCode);
+  if (!room || room.gamePhase !== "drawing") return;
+
+  const timers = roomTimers.get(roomCode);
+  if (timers && timers.drawing) {
+    clearTimeout(timers.drawing);
+  }
+
+  room.gamePhase = "turn-end";
+
+  io.to(roomCode).emit("turn-end", {
+    word: room.currentWord,
+    correctGuessers: room.correctGuessers,
+    players: room.players,
+  });
+
+  const timer = setTimeout(() => {
+    startNextTurn(roomCode);
+  }, 5000);
+
+  if (!roomTimers.has(roomCode)) roomTimers.set(roomCode, {});
+  roomTimers.get(roomCode).turnEnd = timer;
+};
+
+const endGame = (roomCode) => {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  clearRoomTimers(roomCode);
+  room.gamePhase = "game-end";
+  room.gameStarted = false;
+
+  const leaderboard = [...room.players].sort((a, b) => b.score - a.score);
+
+  io.to(roomCode).emit("game-end", {
+    leaderboard,
+    winner: leaderboard[0],
+  });
+
+  setTimeout(() => {
+    const currentRoom = room.get(roomCode);
+    if (!currentRoom) return;
+
+    const onlinePlayers = currentRoom.players.filter(
+      (p) => p.status === "online",
+    );
+    console.log(
+      `Room ${roomCode}: Removing ${currentRoom.players.length - onlinePlayers.length} offline players`,
+    );
+
+    onlinePlayers.forEach((p) => {
+      p.score = 0;
+      p.hasGuessed = false;
+    });
+
+    currentRoom.players = onlinePlayers;
+
+    currentRoom.currentDrawerIndex = -1;
+    currentRoom.currentDrawer = null;
+    currentRoom.currentWord = null;
+    currentRoom.wordOptions = [];
+    currentRoom.gamePhase = "lobby";
+    currentRoom.round = 0;
+    currentRoom.drawingData = [];
+    currentRoom.correctGuessers = [];
+    currentRoom.turnStartTime = null;
+
+    if (onlinePLayers.length === 0) {
+      console.log(`Room ${roomCode} is empty. Deleting room.`);
+      clearRoomTimers(roomCode);
+      rooms.delete(roomCode);
+      return;
+    }
+    const hostExists = onlinePlayers.find((p) => p.id === currentRoom.host);
+    if (!hostExists && onlinePlayers.length > 0) {
+      currentRoom.host = onlinePlayers[0].id;
+      console.log(
+        `Room ${roomCode}:New Host assigned to ${onlinePlayers[0].name}`,
+      );
+    }
+
+    io.to(roomCode).emit("game-reset", {
+      players: currentRoom.players,
+      hostId: currentRoom.host,
+      settings: currentRoom.settings,
+      message: "Game ended! Ready to play again?",
+    });
+    console.log(
+      `Room ${roomCode}:Game reset ${onlinePlayers.length} players remaining.`,
+    );
+  }, 10000);
+};
+
+const checkGuess = (roomCode, playerId, guess, timeLeft) => {
+  const room = rooms.get(roomCode);
+  if (!room || room.gamePhase !== "drawing") return false;
+
+  const player = room.players.find((p) => p.id === playerId);
+  if (!player) return false;
+
+  if (playerId === room.currentDrawer) return false;
+
+  if (player.hasGuessed) return false;
+  if (typeof guess !== "string") return false;
+
+  const isCorrect =
+    guess.toLowerCase().trim() === room.currentWord.toLowerCase();
+  if (!isCorrect) return false;
+
+  player.hasGuessed = true;
+
+  const roundDurationSec = room.settings.roundDuration;
+  const elapsedSec = Math.min(
+    roundDurationSec,
+    Math.max(0, (Date.now() - room.turnStartTime) / 1000),
+  );
+  const timeLeftSec = Math.max(0, roundDurationSec - elapsedSec);
+  const timePenalty = Math.max(0, Math.ceil(elapsedSec / 2));
+
+  if (room.currentGuessers.length === 0) {
+    player.score += Math.max(0, POINTS.FIRST_GUESS - timePenalty);
+
+    const drawer = room.players.find((p) => p.id === room.currentDrawer);
+    if (drawer) {
+      const roundDurationSec = room.settings.roundDuration;
+      const speedRatio = Math.max(
+        0,
+        Math.min(1, timeLeftSec / roundDurationSec),
+      );
+      drawer.score += Math.round(POINTS.DRAWER * speedRatio);
+    }
+  } else {
+    player.score += Math.max(0, POINTS.OTHER_GUESS - timePenalty);
+  }
+  room.correctGuessers.push({
+    playerId: player.id,
+    playerName: player.name,
+    time: Date.now() - room.turnStartTime,
+  });
+  io.to(roomCode).emit("correct-guess", {
+    playerId: player.id,
+    playerName: player.name,
+    players: room.players,
+  });
+
+  const nonDrawerPlayers = room.players.filter(
+    (p) => p.id !== room.currentDrawer,
+  );
+  const allGuessed = nonDrawerPlayers.every((p) => p.hasGuessed);
+  if (allGuessed) {
+    endTurn(roomCode);
+  }
+  return true;
+};
