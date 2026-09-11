@@ -387,3 +387,552 @@ const checkGuess = (roomCode, playerId, guess, timeLeft) => {
   }
   return true;
 };
+
+const messageHistory = new Map();
+function canSendMessage(userId) {
+  const now = Date.now();
+  const history = messageHistory.get(userId) || [];
+
+  const recent = history.filter((ts) => now - ts < MESSAGE_TIME_WINDOW);
+  if (recent.length >= MESSAGE_LIMIT) {
+    return false;
+  }
+  recent.push(now);
+  messageHistory.set(userId, recent);
+  return true;
+}
+
+const cleanupMessageHistory = (userId) => {
+  setTimeout(
+    () => {
+      messageHistory.delete(userId);
+    },
+    5 * 60 * 1000,
+  );
+};
+
+const voiceChatUsers = new Map();
+
+const getVoiceUsers = (roomCode) => {
+  if (!voiceChatUsers.has(roomCode)) {
+    voiceChatUsers.set(roomCode, new Set());
+  }
+  return voiceChatUsers.get(roomCode);
+};
+
+const addVoiceUser = (roomCode, socketId) => {
+  const users = getVoiceUsers(roomCode);
+  users.add(socketId);
+};
+
+const removeVoiceUser = (roomCode, socketId) => {
+  const users = getVoiceUsers(roomCode);
+  users.delete(socketId);
+  if (users.size === 0) {
+    voiceChatUsers.delete(roomCode);
+  }
+};
+
+const isInVoiceChat = (roomCode, socketId) => {
+  const users = getVoiceUsers(roomCode);
+  return users.has(socketId);
+};
+
+io.on("connection", (socket) => {
+  console.log("User connected", socket.id);
+  socket.on("create-room", ({ playerName }) => {
+    const playerId = uuidv4();
+    const room = createRoom(playerName, playerId, socket.id);
+    rooms.set(room.code, room);
+    socket.join(room.code);
+    socket.emit("room-created", {
+      code: room.code,
+      player: room.players[0],
+      settings: room.settings,
+    });
+    console.log(`Room ${room.code} created by ${playerName}`);
+  });
+
+  socket.on("join-room", ({ code, playerName }) => {
+    const room = rooms.get(code);
+
+    if (!room) {
+      socket.emit("error", { message: "room not found" });
+      return;
+    }
+    if (room.players.length >= room.settings.maxPlayers) {
+      socket.emit("error", { message: "room is full" });
+      return;
+    }
+    if (room.gameStarted) {
+      socket.emit("error", { message: "game already started" });
+      return;
+    }
+    const playerId = uuidv4();
+    const player = {
+      id: playerId,
+      socketId: socket.id,
+      name: playerName,
+      score: 0,
+      status: "online",
+      hasGuessed: false,
+    };
+    room.players.push(player);
+
+    socket.join(code);
+    socket.emit("room-joined", { room, player });
+
+    io.to(code).emit("player-joined", {
+      player: player,
+      players: room.players,
+    });
+    socket.emit("load-drawing", room.drawingData);
+    socket.emit("chat-history", room.messages);
+    console.log(`${playerName}joined room ${code}`);
+  });
+
+  socket.on("reconnect-room", ({ code, playerId }) => {
+    const room = rooms.get(code);
+
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+    const playerIndex = room.players.findIndex((p) => p.id === playerId);
+    if (playerIndex === -1) {
+      socket.emit("error", { message: "Player not found in the room" });
+      return;
+    }
+    room.players[playerIndex].socketId = socket.id;
+    room.players[playerIndex].status = "online";
+    const player = room.players[playerIndex];
+
+    socket.join(code);
+
+    socket.emit("room-reconnected", { room, player });
+
+    socket.to(code).emit("player-status-changed", {
+      playerId: player.id,
+      status: "online",
+      players: room.players,
+    });
+
+    socket.emit("chat-history", room.messages);
+    socket.emit("load-drawing", room.drawingData);
+
+    if (room.gameStarted) {
+      let wordHint = null;
+
+      // Generate proper word hint if in drawing phase
+      if (room.currentWord && room.gamePhase === "drawing") {
+        wordHint = createWordHint(room.currentWord);
+      }
+
+      socket.emit("game-state-sync", {
+        gamePhase: room.gamePhase,
+        currentDrawer: room.currentDrawer,
+        round: room.round,
+        maxRounds: room.settings.maxRounds,
+        wordHint: wordHint,
+        players: room.players,
+      });
+      if (player.id === room.currentDrawer && room.currentWord) {
+        socket.emit("your-word", { word: room.currentWord });
+      }
+    }
+    console.log(`${player.name} reconnected to room ${code}`);
+  });
+
+  socket.on("update-settings", ({ roomCode, settings }) => {
+    const room = rooms.get(roomCode);
+
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player || player.id !== room.host) {
+      socket.emit("error", { message: "only host can update settings" });
+      return;
+    }
+    if (room.gameStarted) {
+      socket.emit("error", {
+        message: "cannot update settings while game is in progress",
+      });
+      return;
+    }
+    const { maxPlayers, roundDuration, maxRounds, difficulty } = settings;
+
+    if (maxPlayers && maxPlayers >= 4 && maxPlayers <= 10) {
+      if (maxPlayers >= room.players.length) {
+        room.settings.maxPlayers = maxPlayers;
+      } else {
+        socket.emit("error", {
+          message: `Cannot set max players below current player count (${room.players.length})`,
+        });
+        return;
+      }
+    }
+
+    if (roundDuration && [30, 60, 90, 120].includes(roundDuration)) {
+      room.settings.roundDuration = roundDuration;
+    }
+
+    if (maxRounds && maxRounds >= 3 && maxRounds <= 8) {
+      room.settings.maxRounds = maxRounds;
+    }
+
+    if (difficulty && ["easy", "medium", "hard"].includes(difficulty)) {
+      room.settings.difficulty = difficulty;
+    }
+
+    io.to(roomCode).emit("settings-updated", {
+      settings: room.settings,
+      updatesBy: player.name,
+    });
+  });
+
+  socket.on("start-game", ({ roomCode }) => {
+    const room = rooms.get(roomCode);
+
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player || player.id !== room.host) {
+      socket.emit("error", { message: "only host can start the game" });
+      return;
+    }
+    if (room.players.length < 2) {
+      socket.emit("error", { message: "Need at least 2 players to start" });
+      return;
+    }
+    room.gameStarted = true;
+    room.round = 0;
+    room.currentDrawerIndex = -1;
+
+    room.players.forEach((p) => {
+      p.score = 0;
+      p.hasGuessed = false;
+    });
+    io.to(roomCode).emit("game-started", {
+      maxRounds: room.settings.maxRounds,
+    });
+
+    setTimeout(() => {
+      startNextTurn(roomCode);
+    }, 3000);
+    console.log(`Game started in room ${roomCode}`);
+  });
+
+  socket.on("leave-room", ({ roomCode }) => {
+    const room = rooms.get(roomCode);
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+
+    const playerIndex = room.players.findIndex((p) => p.socketId === socket.id);
+    if (playerIndex === -1) {
+      socket.emit("error", { message: "Player not found in the room" });
+      return;
+    }
+
+    const player = room.players[playerIndex];
+    const wasHost = player.id === room.host;
+    const wasDrawing = player.id === room.currentDrawer;
+
+    cleanupMessageHistory(player.id);
+
+    if (isInVoiceChat(roomCode, socket.id)) {
+      removeVoiceUser(roomCode, socket.id);
+      io.to(roomCode).emit("voice-user-left", {
+        playerId: player.id,
+        socketId: socket.id,
+      });
+    }
+
+    room.players.splice(playerIndex, 1);
+
+    console.log(
+      `${player.name} left room ${roomCode}. ${room.players.length} players remaining.`,
+    );
+    socket.leave(roomCode);
+
+    socket.emit("left-room", {
+      message: "You have left the room.",
+      redirect: true,
+    });
+    if (room.players.length === 0) {
+      console.log(`Room ${roomCode} is now empty. Deleting room.`);
+      clearRoomTimers(roomCode);
+      rooms.delete(roomCode);
+      return;
+    }
+
+    if (wasHost) {
+      room.host = room.players[0].id;
+      console.log(`New host in room ${roomCode}:${room.players[0].name}`);
+    }
+
+    if (wasDrawing && room.gameStarted && room.gamePhase === "drawing") {
+      console.log(`Current drawer left. Ending turn early.`);
+      endTurn(roomCode);
+    }
+
+    io.to(roomCode).emit("player-left", {
+      playerName: player.name,
+      players: room.players,
+      hostId: room.host,
+      wasDrawing: wasDrawing,
+    });
+
+    if (room.gameStarted && room.players.length < 2) {
+      console.log(`Only 1 player remaining in room ${roomCode}. Ending game.`);
+
+      clearRoomTimers(roomCode);
+
+      room.gameStarted = false;
+      room.gamePhase = "lobby";
+      room.currentDrawer = null;
+      room.currentDrawerIndex = -1;
+      room.round = 0;
+      room.drawingData = [];
+      room.correctGuessers = [];
+
+      room.players.forEach((p) => {
+        p.score = 0;
+        p.hasGuessed = false;
+      });
+      io.to(roomCode).emit("game-ended-insufficient-players", {
+        message: "Game ended:not enough players",
+        players: room.players,
+        hostId: room.host,
+      });
+    }
+  });
+
+  socket.on("select-word", async ({ roomCode, word }) => {
+    const room = room.get(roomCode);
+    if (!room) return;
+
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player || player.id !== room.currentDrawer) return;
+
+    if (!room.wordOptions.includes(word)) returnl;
+
+    await selectWord(roomCode, word);
+  });
+  socket.on("fetch-players", ({ roomId }) => {
+    const room = rooms.get(roomId);
+
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+    socket.emit("all-players", { players: room.players, hostId: room.host });
+  });
+  socket.on("fetch-chat", ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    socket.emit("chat-history", room.messages);
+  });
+
+  socket.on("fetch-settings", ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room) {
+      socket.emit("error", { message: "Room not found" });
+      return;
+    }
+    socket.emit("settings-data", {
+      settings: room.settings,
+      hostId: room.host,
+    });
+  });
+  socket.on("send-message", ({ roomCode, message, senderName }) => {
+    const room = rooms.get(roomCode);
+    if (!room) return;
+
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player) return;
+
+    if (room.gamePhase === "drawing") {
+      const wasCorrect = checkGuess(roomCode, player.id, message);
+
+      if (wasCorrect) {
+        return;
+      }
+    }
+    if (!canSendMessage(player.id)) {
+      socket.emit("spam-warning", "Slow down bro, Dont fuck spam");
+      return;
+    }
+
+    const msgData = {
+      message,
+      senderName,
+      senderId: player.id,
+      time: Date.now(),
+    };
+    room.messages.push(msgData);
+    io.to(roomCode).emit("receive-message", msgData);
+  });
+
+  socket.on("draw", (drawData) => {
+    const room = rooms.get(drawData.roomCode);
+    if (!room) return;
+
+    if (room.gamePhase !== "drawing") return;
+
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player || player.id !== room.currentDrawer) return;
+
+    room.drawingData.push(drawData);
+    socket.to(drawData.roomCode).emit("draw", drawData);
+  });
+
+  socket.on("clear-canvas", ({ roomCode }) => {
+    const room = rooms.get(roomCode);
+    if (!room) return;
+    const player = room.players.find((p) => p.socketId === socket.id);
+    if (!player || player.id !== room.currentDrawer) return;
+
+    room.drawingData = [];
+    io.to(roomCode).emit("clear-canvas");
+  });
+
+  socket.on("fetch-drawing", ({ roomId }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    socket.emit("load-drawing", room.drawingData);
+  });
+
+  socket.on("join-voice", ({ roomCode, playerId }) => {
+    const room = rooms.get(roomCode);
+    if (!room) return;
+
+    const player = room.players.find(
+      (p) => p.id === playerId && p.socketId === socket.id,
+    );
+    if (!player) return;
+
+    addVoiceUser(roomCode, socket.id);
+
+    socket.to(roomCode).emit("voice-user-joined", {
+      playerId: player.id,
+      socketId: socket.id,
+    });
+
+    const voiceUsers = getVoiceUsers(roomCode);
+    const voicePlayers = room.players
+      .filter((p) => voiceUsers.has(p.socketId) && p.socketId !== socket.id)
+      .map((p) => ({ playerId: p.id, socketId: p.socketId }));
+    socket.emit("voice-users-list", { users: voicePlayers });
+    console.log(`${player.name} joined voice chat in room ${roomCode}`);
+  });
+
+  socket.on("leave-voice", ({ roomCode, playerId }) => {
+    const room = rooms.get(roomCode);
+    if (!room) return;
+    const player = room.players.find((p) => p.id === playerId);
+    if (!player) return;
+
+    removeVoiceUser(roomCode, socket.id);
+
+    io.to(roomCode).emit("voice-user-left", {
+      playerId: playerId,
+      socketId: socket.id,
+    });
+    console.log(`${player.name} left voice chat in room ${roomCode}`);
+  });
+
+  socket.on("webrtc-offer", ({ targetSocketId, offer, senderId }) => {
+    io.to(targetSocketId).emit("webrtc-offer", {
+      offer: offer,
+      senderSocketId: socket.id,
+      senderId: senderId,
+    });
+  });
+
+  socket.on("webrtc-answer", ({ targetSocketId, answer, senderId }) => {
+    io.to(targetSocketId).emit("webrtc-answer", {
+      answer: answer,
+      senderSocketId: socket.id,
+      senderId: senderId,
+    });
+  });
+  socket.on(
+    "webrtc-ice-candidate",
+    ({ targetSocketId, candidate, senderId }) => {
+      io.to(targetSocketId).emit("webrtc-ice-candidate", {
+        candidate: candidate,
+        senderSocketId: socket.id,
+        senderId: senderId,
+      });
+    },
+  );
+  socket.on("disconnect", () => {
+    console.log("User disconnected", socket.id);
+
+    for (const [roomCode, users] of voiceChatUsers.entries()) {
+      if (users.has(socket.id)) {
+        removeVoiceUser(roomCode, socket.id);
+      }
+    }
+
+    for (const [code, room] of rooms.entries()) {
+      const playerIndex = room.players.findIndex(
+        (p) => p.socketId === socket.id,
+      );
+
+      if (playerIndex !== -1) {
+        const player = room.players[playerIndex];
+
+        room.players[playerIndex].status = "offline";
+        cleanupMessageHistory(player.id);
+
+        console.log(`${player.name} went offline in room ${code}.`);
+        io.to(code).emit("player-status-changed", {
+          playerId: player.id,
+          status: "offline",
+          players: room.players,
+        });
+        const allOffline = room.players.every((p) => p.status === "offline");
+
+        if (allOffline) {
+          console.log(`All players offline in room ${code}. Ending game.`);
+          const cleanupTimer = setTimeout(
+            () => {
+              const currentRoom = rooms.get(code);
+              if (
+                currentRoom &&
+                currentRoom.players.every((p) => p.status === "offline")
+              ) {
+                clearRoomTimers(code);
+                rooms.delete(code);
+                console.log(`Room ${code} deleted due to all players offline.`);
+              }
+            },
+            1 * 60 * 1000,
+          );
+          if (!roomTimers.has(code)) roomTimers.set(code, {});
+          roomTimers.get(code).cleanup = cleanupTimer;
+        }
+        break;
+      }
+    }
+  });
+});
+
+app.get("/", async (req, res) => {
+  res.json({ status: "server is healthy", success: true });
+});
+const PORT = process.env.PORT || 5000;
+
+server.listen(PORT, () => {
+  console.log(`Sever is running on PORT ${PORT}`);
+});
