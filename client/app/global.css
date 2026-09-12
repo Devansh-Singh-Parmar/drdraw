@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+@theme {
+  --color-game-blue: #4a86c7;
+  --color-game-blue-dark: #3777bb;
+  --color-game-green: #6aaa3f;
+  --color-game-green-dark: #5a9635;
+  --color-game-orange: #e8a838;
+  --color-game-panel: #ffffff;
+  --color-game-border: #b8b8b8;
+  --color-game-text: #333333;
+  --color-game-muted: #666666;
+}
+
+body {
+  background-color: var(--color-game-blue);
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.game-panel {
+  background: var(--color-game-panel);
+  border: 2px solid var(--color-game-border);
+  border-radius: 8px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.08);
+}
+
+.game-btn {
+  background: var(--color-game-green);
+  color: white;
+  border: 2px solid var(--color-game-green-dark);
+  border-radius: 6px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+
+.game-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.game-btn:active:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.game-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.game-btn-secondary {
+  background: #5b9bd5;
+  border-color: #4a86c7;
+  color: white;
+}
+
+.game-input {
+  background: white;
+  border: 2px solid var(--color-game-border);
+  border-radius: 6px;
+  color: var(--color-game-text);
+  padding: 0.6rem 0.75rem;
+  width: 100%;
+  outline: none;
+}
+
+.game-input:focus {
+  border-color: var(--color-game-blue);
+}
+
+.game-input::placeholder {
+  color: #999;
+}
+
+.logo-text {
+  font-family: var(--font-fredoka), sans-serif;
+  letter-spacing: -0.02em;
+}
+
+.logo-text-light {
+  font-family: var(--font-fredoka), sans-serif;
+  color: white;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.15);
+  letter-spacing: -0.02em;
+}
