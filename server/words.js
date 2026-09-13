@@ -1453,7 +1453,7 @@ const MAX_RECENT = 50;
 const getRandomWords = (difficulty = "easy", count = 3) => {
   const validDifficulty = WORD_BANKS[difficulty] ? difficulty : "easy";
 
-  const wordBank = WORD_BANKS[validaDifficulty];
+  const wordBank = WORD_BANKS[validDifficulty];
   const recent = recentCache[validDifficulty];
 
   const safeCount = Math.min(count, wordBank.length);

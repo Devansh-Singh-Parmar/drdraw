@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { initSocket } from "@/socket/socket";
+import { initSocket } from "../../socket/socket";
 import { useRouter } from "next/navigation";
 import { useSearchParams } from "next/navigation";
 import Header from "./Header";
@@ -28,7 +28,7 @@ export default function DrDraw() {
     });
     socket.on("room-joined", ({ room, player }) => {
       sessionStorage.setItem("player", JSON.stringify(player));
-      sessionStorage.setItem("roomId", code);
+      sessionStorage.setItem("roomId", room.code);
       router.push(`/room/${room.code}`);
     });
     socket.on("error", ({ message }) => {

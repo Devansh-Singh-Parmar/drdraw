@@ -1,5 +1,5 @@
 "use client";
-import { initSocket } from "@/socket/socket";
+import { initSocket } from "../../socket/socket";
 import { Pipette } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -35,12 +35,10 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     "#00FFFF",
   ];
 
-  // Initialize canvas with fixed dimensions
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Set fixed canvas dimensions
     canvas.width = CANVAS_WIDTH;
     canvas.height = CANVAS_HEIGHT;
 
@@ -49,7 +47,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     ctx.lineJoin = "round";
     ctxRef.current = ctx;
 
-    // Calculate scale to fit container
     updateScale();
     window.addEventListener("resize", updateScale);
 
@@ -58,7 +55,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     };
   }, []);
 
-  // Update scale based on container size
   const updateScale = () => {
     const container = containerRef.current;
     const canvas = canvasRef.current;
@@ -67,7 +63,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     const containerWidth = container.clientWidth;
     const containerHeight = container.clientHeight;
 
-    // Calculate scale to fit while maintaining aspect ratio
     const scaleX = containerWidth / CANVAS_WIDTH;
     const scaleY = containerHeight / CANVAS_HEIGHT;
     const newScale = Math.min(scaleX, scaleY, 1); // Never scale up, only down
@@ -75,7 +70,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     setScale(newScale);
   };
 
-  // Socket listeners for drawing
   useEffect(() => {
     if (!socket) return;
 
@@ -98,7 +92,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     socket.on("clear-canvas", handleClear);
     socket.on("load-drawing", handleLoadDrawing);
 
-    // Request drawing history when component mounts
     socket.emit("fetch-drawing", { roomId });
 
     return () => {
@@ -136,7 +129,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
     const rect = canvas.getBoundingClientRect();
     const event = e.touches ? e.touches[0] : e;
 
-    // Convert screen coordinates to canvas coordinates accounting for scale
     const x = (event.clientX - rect.left) / scale;
     const y = (event.clientY - rect.top) / scale;
 
@@ -144,7 +136,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
   };
 
   const startDrawing = (e) => {
-    // e.preventDefault();
     const { x, y } = getCoords(e);
     setStart({ x, y });
     setIsDrawing(true);
@@ -153,7 +144,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
   const draw = (e) => {
     if (!isDrawing) return;
     if (!canDraw) return;
-    // e.preventDefault();
 
     const { x, y } = getCoords(e);
 
@@ -192,12 +182,10 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Drawing Tools */}
       <div className="p-2 border-b-2 border-game-border bg-gray-50 shrink-0">
         <div
           className={`flex flex-wrap gap-y-2 gap-x-2 items-center ${canDraw ? "justify-between" : "justify-center"}`}
         >
-          {/* Tool Buttons */}
           {canDraw && (
             <div className="flex gap-1.5 items-start">
               <button
@@ -225,7 +213,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
             </div>
           )}
 
-          {/* Color Palette */}
           {canDraw && (
             <div className="flex gap-2 items-center flex-wrap">
               {colorPalette.map((c) => (
@@ -256,7 +243,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
             </div>
           )}
 
-          {/* Size Control */}
           {canDraw && (
             <div className="flex gap-2 items-center text-game-text">
               <span className="text-sm font-bold">size</span>
@@ -272,14 +258,12 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
             </div>
           )}
 
-          {/* Can't draw indicator */}
           {!canDraw && (
             <div className="text-center font-bold text-game-muted text-sm py-1">
               👀 watch and guess!
             </div>
           )}
 
-          {/* Clear Button */}
           {canDraw && (
             <button
               onClick={handleClear}
@@ -292,7 +276,6 @@ const DrawingBoard = ({ roomId, canDraw = true }) => {
         </div>
       </div>
 
-      {/* Canvas Container */}
       <div
         ref={containerRef}
         className="flex-1 p-2 flex items-center justify-center bg-[#e8e8e8] min-h-0 overflow-hidden"

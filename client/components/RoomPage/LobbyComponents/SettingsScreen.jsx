@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { Settings, Users, Clock, Trophy, X, Zap } from "lucide-react";
-import { initSocket } from "@/socket/socket";
+import { initSocket } from "../../../socket/socket";
 import { createPortal } from "react-dom";
 
 const SettingsScreen = ({ roomCode, playerId, hostId }) => {

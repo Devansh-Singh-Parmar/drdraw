@@ -1,4 +1,4 @@
-import GameLobby from "@/components/RoomPage/GameLobby";
+import GameLobby from "../../../components/RoomPage/GameLobby";
 
 const page = async ({ params }) => {
   const { roomId } = await params;

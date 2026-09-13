@@ -1,5 +1,5 @@
 import { Fredoka, Nunito } from "next/font/google";
-import ToasterProvider from "@/providers/ToasterProvider";
+import ToasterProvider from "../providers/ToasterProvider";
 
 import "./global.css";
 

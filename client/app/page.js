@@ -1,4 +1,4 @@
-import Lobby from "@/components/HomePage/Lobby";
+import Lobby from "../components/HomePage/Lobby";
 import { Suspense } from "react";
 
 export default function Home() {
